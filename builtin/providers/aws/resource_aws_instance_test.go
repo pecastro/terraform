@@ -17,9 +17,8 @@ func TestAccAWSInstance_normal(t *testing.T) {
 
 	testCheck := func(*terraform.State) error {
 		if *v.Placement.AvailabilityZone != "us-west-2a" {
-			return fmt.Errorf("bad availability zone: %#v", *v.Placement.AvailabilityZone)
+			return fmt.Errorf("bad availability zone, expected: %#v, got: %#v", "us-west-2a", *v.Placement.AvailabilityZone)
 		}
-
 		if len(v.SecurityGroups) == 0 {
 			return fmt.Errorf("no security groups: %#v", v.SecurityGroups)
 		}
@@ -44,7 +43,7 @@ func TestAccAWSInstance_normal(t *testing.T) {
 					resource.TestCheckResourceAttr(
 						"aws_instance.foo",
 						"user_data",
-						"0beec7b5ea3f0fdbc95d0dd47f3c5bc275da8a33"),
+						"3dc39dda39be1205215e776bad998da361a5955d"),
 				),
 			},
 
@@ -60,7 +59,7 @@ func TestAccAWSInstance_normal(t *testing.T) {
 					resource.TestCheckResourceAttr(
 						"aws_instance.foo",
 						"user_data",
-						"0beec7b5ea3f0fdbc95d0dd47f3c5bc275da8a33"),
+						"3dc39dda39be1205215e776bad998da361a5955d"),
 				),
 			},
 		},
