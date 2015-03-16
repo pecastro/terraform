@@ -262,9 +262,19 @@ func resourceAwsInstanceCreate(d *schema.ResourceData, meta interface{}) error {
 		userData = base64.StdEncoding.EncodeToString([]byte(v.(string)))
 	}
 
+	// check for non-default Subnet, and cast it to a String
+	var hasSubnet bool
+	subnet, hasSubnet := d.GetOk("subnet_id")
+	subnetID := subnet.(string)
+
 	placement := &ec2.Placement{
 		AvailabilityZone: aws.String(d.Get("availability_zone").(string)),
-		Tenancy:          aws.String(d.Get("tenancy").(string)),
+	}
+
+	if hasSubnet {
+		// Tenancy is only valid inside a VPC
+		// See http://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_Placement.html
+		placement.Tenancy = aws.String(d.Get("tenancy").(string))
 	}
 
 	iam := &ec2.IAMInstanceProfileSpecification{
@@ -287,11 +297,6 @@ func resourceAwsInstanceCreate(d *schema.ResourceData, meta interface{}) error {
 	if v := d.Get("associate_public_ip_address"); v != nil {
 		associatePublicIPAddress = v.(bool)
 	}
-
-	// check for non-default Subnet, and cast it to a String
-	var hasSubnet bool
-	subnet, hasSubnet := d.GetOk("subnet_id")
-	subnetID := subnet.(string)
 
 	var groups []string
 	if v := d.Get("security_groups"); v != nil {
@@ -473,13 +478,17 @@ func resourceAwsInstanceRead(d *schema.ResourceData, meta interface{}) error {
 		return nil
 	}
 
-	d.Set("availability_zone", instance.Placement.AvailabilityZone)
+	if instance.Placement != nil {
+		d.Set("availability_zone", instance.Placement.AvailabilityZone)
+	}
+	if instance.Placement.Tenancy != nil {
+		d.Set("tenancy", instance.Placement.Tenancy)
+	}
 	d.Set("key_name", instance.KeyName)
 	d.Set("public_dns", instance.PublicDNSName)
 	d.Set("public_ip", instance.PublicIPAddress)
 	d.Set("private_dns", instance.PrivateDNSName)
 	d.Set("private_ip", instance.PrivateIPAddress)
-	d.Set("subnet_id", instance.SubnetID)
 	if len(instance.NetworkInterfaces) > 0 {
 		d.Set("subnet_id", instance.NetworkInterfaces[0].SubnetID)
 	} else {
@@ -494,7 +503,11 @@ func resourceAwsInstanceRead(d *schema.ResourceData, meta interface{}) error {
 	// we use IDs if we're in a VPC. However, if we previously had an
 	// all-name list of security groups, we use names. Or, if we had any
 	// IDs, we use IDs.
-	useID := *instance.SubnetID != ""
+	var useID bool
+	if instance.SubnetID != nil {
+		useID = (*instance.SubnetID != "")
+	}
+
 	if v := d.Get("security_groups"); v != nil {
 		match := false
 		for _, v := range v.(*schema.Set).List() {
@@ -503,7 +516,6 @@ func resourceAwsInstanceRead(d *schema.ResourceData, meta interface{}) error {
 				break
 			}
 		}
-
 		useID = match
 	}
 
@@ -568,17 +580,19 @@ func resourceAwsInstanceRead(d *schema.ResourceData, meta interface{}) error {
 func resourceAwsInstanceUpdate(d *schema.ResourceData, meta interface{}) error {
 	ec2conn := meta.(*AWSClient).ec2conn
 	opts := new(ec2.ModifyInstanceAttributeRequest)
-
 	log.Printf("[INFO] Modifying instance %s: %#v", d.Id(), opts)
-	err := ec2conn.ModifyInstanceAttribute(&ec2.ModifyInstanceAttributeRequest{
-		InstanceID: aws.String(d.Id()),
-		SourceDestCheck: &ec2.AttributeBooleanValue{
-			Value: aws.Boolean(d.Get("source_dest_check").(bool)),
-		},
-	})
+	// Can only modify source_dest_check in a VPC
+	if _, ok := d.GetOk("subnet_id"); ok {
+		err := ec2conn.ModifyInstanceAttribute(&ec2.ModifyInstanceAttributeRequest{
+			InstanceID: aws.String(d.Id()),
+			SourceDestCheck: &ec2.AttributeBooleanValue{
+				Value: aws.Boolean(d.Get("source_dest_check").(bool)),
+			},
+		})
 
-	if err != nil {
-		return err
+		if err != nil {
+			return err
+		}
 	}
 
 	// TODO(mitchellh): wait for the attributes we modified to
